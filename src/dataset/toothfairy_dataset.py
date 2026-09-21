@@ -97,3 +97,41 @@ class ToothFairyPatchDataset(Dataset):
             tensor_data = torch.from_numpy(np.array(data)).unsqueeze(0).float()
             tensor_label = torch.from_numpy(np.array(label)).long() if label is not None else torch.zeros_like(tensor_data[0], dtype=torch.long)
             return tensor_data, tensor_label, case_id
+
+class CombinedToothFairyDataset(ToothFairyPatchDataset):
+    """
+    Combines dense ground-truth dataset with pseudo-labeled dataset seamlessly.
+    """
+    def __init__(self, dense_pids: list, pseudo_pids: list, patch_size: tuple, transforms=None, samples_per_epoch: int = 300):
+        super().__init__(
+            case_ids=dense_pids,
+            cache_dir=Path(__file__).resolve().parent.parent.parent / "processed_data" / "dense_cached",
+            patch_size=patch_size,
+            is_train=True,
+            transforms=transforms,
+            samples_per_epoch=samples_per_epoch
+        )
+        self.dense_pids = dense_pids
+        self.pseudo_pids = pseudo_pids
+        self.dense_cache = Path(__file__).resolve().parent.parent.parent / "processed_data" / "dense_cached"
+        self.pseudo_cache = Path(__file__).resolve().parent.parent.parent / "processed_data" / "pseudo_cached"
+
+    def __getitem__(self, idx: int):
+        if torch.rand(1).item() < 0.50 or len(self.pseudo_pids) == 0:
+            case_id = self.dense_pids[torch.randint(0, len(self.dense_pids), (1,)).item()]
+            cache_dir = self.dense_cache
+        else:
+            case_id = self.pseudo_pids[torch.randint(0, len(self.pseudo_pids), (1,)).item()]
+            cache_dir = self.pseudo_cache
+            
+        case_dir = cache_dir / case_id
+        data = np.load(case_dir / "data.npy", mmap_mode='r')
+        label = np.load(case_dir / "label_bilateral.npy", mmap_mode='r')
+        
+        patch_data, patch_label = self._sample_patch(data, label)
+        if self.transforms is not None:
+            patch_data, patch_label = self.transforms(patch_data, patch_label)
+            
+        tensor_data = torch.from_numpy(patch_data).unsqueeze(0).float()
+        tensor_label = torch.from_numpy(patch_label).long()
+        return tensor_data, tensor_label, case_id

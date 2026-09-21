@@ -57,7 +57,9 @@ def sliding_window_predict_fast(model, volume_np, device="cuda", patch_size=(64,
                 
     return output_probs / np.maximum(count_map, 1e-5)
 
-def run_benchmark_evaluation(checkpoint_paths: list = None, split_name: str = "test", min_cc_size: int = 300):
+from src.models.mednext3d import MedNeXt3D
+
+def run_benchmark_evaluation(checkpoint_paths: list = None, split_name: str = "test", min_cc_size: int = 400):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print("=" * 75)
     print(f"📊 TOOTHFAIRY SOTA BENCHMARK EVALUATION (Split: {split_name})")
@@ -71,7 +73,11 @@ def run_benchmark_evaluation(checkpoint_paths: list = None, split_name: str = "t
     models = []
     for cp in checkpoint_paths:
         print(f"  - {cp}")
-        m = ResEncoderUNet3D(in_channels=1, num_classes=NUM_CLASSES, feature_dims=[24, 48, 96, 192, 256], deep_supervision=False)
+        if "mednext" in str(cp).lower():
+            m = MedNeXt3D(in_channels=1, num_classes=NUM_CLASSES, feature_dims=[24, 48, 96, 192, 256], kernel_size=5, deep_supervision=False)
+        else:
+            m = ResEncoderUNet3D(in_channels=1, num_classes=NUM_CLASSES, feature_dims=[24, 48, 96, 192, 256], deep_supervision=False)
+            
         ck = torch.load(cp, map_location=device)
         sd = {k: v for k, v in ck["model_state_dict"].items() if not k.startswith("ds_head")}
         m.load_state_dict(sd, strict=False)
