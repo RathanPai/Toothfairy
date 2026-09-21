@@ -1,0 +1,32 @@
+# Large Datasets and Processed Binary Volumes
+ToothFairy_Dataset/
+processed_data/
+checkpoints/
+outputs/**/*.npy
+*.npy
+*.pth
+*.pt
+*.tar.gz
+*.zip
+
+# Python Bytecode and Cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.env
+.venv
+env/
+venv/
+ENV/
+
+# IDE and System Files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Logs
+logs/
+*.log
