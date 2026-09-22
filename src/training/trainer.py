@@ -94,18 +94,19 @@ class Trainer:
         }
 
     @torch.no_grad()
-    def sliding_window_inference(self, volume: torch.Tensor, patch_size: tuple = (80, 128, 160), overlap: float = 0.5) -> torch.Tensor:
+    def sliding_window_inference(self, volume: torch.Tensor, patch_size: tuple = (64, 128, 128), overlap: float = 0.5) -> np.ndarray:
         """
-        Sliding-window 3D patch inference with Gaussian blending to eliminate boundary stitching artifacts.
-        volume: (1, 1, D, H, W)
+        Memory-safe sliding-window 3D patch inference with CPU probability accumulation.
+        volume: (1, 1, D, H, W) on CPU or GPU
         """
         self.model.eval()
-        _, _, D, H, W = volume.shape
+        volume_np = volume[0, 0].cpu().numpy()
+        D, H, W = volume_np.shape
         pD, pH, pW = patch_size
-        num_classes = self.model.num_classes
+        num_classes = getattr(self.model, "num_classes", 3)
         
-        output_probs = torch.zeros((1, num_classes, D, H, W), device=self.device)
-        count_map = torch.zeros((1, 1, D, H, W), device=self.device)
+        output_probs = np.zeros((num_classes, D, H, W), dtype=np.float32)
+        count_map = np.zeros((1, D, H, W), dtype=np.float32)
         
         step_d = max(1, int(pD * (1.0 - overlap)))
         step_h = max(1, int(pH * (1.0 - overlap)))
@@ -121,20 +122,21 @@ class Trainer:
         for z in d_starts:
             for y in h_starts:
                 for x in w_starts:
-                    patch = volume[:, :, z:z+pD, y:y+pH, x:x+pW].to(self.device)
+                    patch = volume_np[z:z+pD, y:y+pH, x:x+pW]
+                    patch_t = torch.from_numpy(patch).unsqueeze(0).unsqueeze(0).to(self.device)
                     with torch.amp.autocast('cuda'):
-                        patch_logits = self.model(patch)
+                        patch_logits = self.model(patch_t)
                         if isinstance(patch_logits, list):
                             patch_logits = patch_logits[0]
-                        patch_probs = torch.softmax(patch_logits, dim=1)
+                        patch_probs = torch.softmax(patch_logits, dim=1)[0].cpu().numpy()
                         
-                    output_probs[:, :, z:z+pD, y:y+pH, x:x+pW] += patch_probs
-                    count_map[:, :, z:z+pD, y:y+pH, x:x+pW] += 1.0
+                    output_probs[:, z:z+pD, y:y+pH, x:x+pW] += patch_probs
+                    count_map[:, z:z+pD, y:y+pH, x:x+pW] += 1.0
                     
-        return output_probs / count_map
+        return output_probs / np.maximum(count_map, 1e-5)
 
     @torch.no_grad()
-    def validate(self, patch_size: tuple = (80, 128, 160)) -> dict:
+    def validate(self, patch_size: tuple = (64, 128, 128)) -> dict:
         self.model.eval()
         dices, hd95s = [], []
         
@@ -142,7 +144,7 @@ class Trainer:
             case_id = case_ids[0]
             # images: (1, 1, D, H, W), targets: (1, D, H, W)
             prob_map = self.sliding_window_inference(images, patch_size=patch_size)
-            pred_classes = torch.argmax(prob_map, dim=1)[0].cpu().numpy()
+            pred_classes = np.argmax(prob_map, axis=0)
             target_np = targets[0].cpu().numpy()
             
             # Post-processing

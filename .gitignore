@@ -27,6 +27,11 @@ ENV/
 *.swo
 .DS_Store
 
+# Visualizer and HTML exports
+scripts/visualize_3d.py
+*.html
+outputs/**/*.html
+
 # Logs
 logs/
 *.log

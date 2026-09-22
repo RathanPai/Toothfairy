@@ -69,20 +69,35 @@ def run_benchmark_evaluation(checkpoint_paths: list = None, split_name: str = "t
         possible_checkpoints = sorted(list(CHECKPOINTS_DIR.glob("**/best_model.pth")))
         checkpoint_paths = possible_checkpoints
         
+        
     print(f"Ensemble Models ({len(checkpoint_paths)}):")
     models = []
+    weights = []
     for cp in checkpoint_paths:
-        print(f"  - {cp}")
-        if "mednext" in str(cp).lower():
+        cp_str = str(cp).lower()
+        if "mednext" in cp_str:
+            print(f"  - [MedNeXt-3D] {cp}")
             m = MedNeXt3D(in_channels=1, num_classes=NUM_CLASSES, feature_dims=[24, 48, 96, 192, 256], kernel_size=5, deep_supervision=False)
-        else:
+            w = 0.20
+        elif "student" in cp_str:
+            print(f"  - [ResEnc Student] {cp}")
             m = ResEncoderUNet3D(in_channels=1, num_classes=NUM_CLASSES, feature_dims=[24, 48, 96, 192, 256], deep_supervision=False)
+            w = 0.30
+        else:
+            print(f"  - [ResEnc Teacher] {cp}")
+            m = ResEncoderUNet3D(in_channels=1, num_classes=NUM_CLASSES, feature_dims=[24, 48, 96, 192, 256], deep_supervision=False)
+            w = 0.50
             
         ck = torch.load(cp, map_location=device)
         sd = {k: v for k, v in ck["model_state_dict"].items() if not k.startswith("ds_head")}
         m.load_state_dict(sd, strict=False)
         m = m.to(device).eval()
         models.append(m)
+        weights.append(w)
+        
+    total_w = sum(weights)
+    weights = [w / total_w for w in weights]
+    print(f"Ensemble Weights: {[round(w, 3) for w in weights]}")
         
     with open(SPLITS_FILE) as f:
         splits = json.load(f)
@@ -99,12 +114,11 @@ def run_benchmark_evaluation(checkpoint_paths: list = None, split_name: str = "t
         data = np.load(case_dir / "data.npy")
         gt_alpha = np.load(case_dir / "gt_alpha.npy") if (case_dir / "gt_alpha.npy").exists() else None
         
-        # Multi-model ensemble
+        # Multi-model weighted ensemble
         ensemble_probs = np.zeros((NUM_CLASSES, *data.shape), dtype=np.float32)
-        for model in models:
+        for model, w in zip(models, weights):
             probs = sliding_window_predict_fast(model, data, device=device, patch_size=PATCH_SIZE)
-            ensemble_probs += probs
-        ensemble_probs /= len(models)
+            ensemble_probs += w * probs
         
         # Argmax class prediction
         raw_classes = np.argmax(ensemble_probs, axis=0)
@@ -146,6 +160,10 @@ def run_benchmark_evaluation(checkpoint_paths: list = None, split_name: str = "t
         csv_path = OUTPUTS_DIR / f"benchmark_results_{split_name}.csv"
         df.to_csv(csv_path, index=False)
         print(f"\nDetailed per-case results saved to: {csv_path}")
+        
+        import importlib
+        generate_report_mod = importlib.import_module("scripts.07_generate_report")
+        generate_report_mod.generate_report()
 
 if __name__ == "__main__":
     run_benchmark_evaluation()
